@@ -7,14 +7,14 @@
 #include "secrets.h"
 
 // Config
-const int timeZone = 0;
-const bool militaryTime = true; //TODO
+const int timeZone = 0; // Your time zone (including daylight savings). If your not sure what yours is: here's a helpful map https://www.timeanddate.com/time/map/
+const bool militaryTime = false; // If you want the time to be displayed in 24 hour time. e.g. 13:05:00
 
-const bool darkMode = true;
+const bool darkMode = true; // White text on a black background
 
-const char* server = "";
-const int port = 8123;
-const String sensorId = "";
+const char* server = ""; // Home Assistant Server IP (HTTP only, not required)
+const int port = 8123; // Home Assistant port (usually 8123)
+const String sensorId = ""; // Home Assistant Sensor ID. e.g. "sensor.temperature"
 
 
 GigaDisplay_GFX display;
@@ -37,17 +37,15 @@ void setup() {
   display.setRotation(1);
 
   themeFillScreen();
-  formatText(5, 200, 220);
 
   if (WiFi.status() == WL_NO_MODULE) {
-    display.print("No Module!");
+    printCentered("No Module", 220, 5);
     while (true);
   }
 
   while (status != WL_CONNECTED) {
     themeFillScreen();
-    formatText(5, 200, 220);
-    display.print("Connecting...");
+    printCentered("Connecting...", 220, 5);
     status = WiFi.begin(SSID, PASS);
 
     delay(3000);
@@ -55,33 +53,34 @@ void setup() {
 
   udp.begin(2390); //2390 is the local listening port
   updateTime();
-  getWeather();
+  weatherString = getWeather();
+  weatherString.replace("°", "");
 }
 
 void loop() {
   tm t;
   _rtc_localtime(time(NULL), &t, RTC_4_YEAR_LEAP_YEAR_SUPPORT);
-
   themeFillScreen();
-  formatText(10, 140, 170);
 
   char buffer[32];
-  strftime(buffer, 32, "%k:%M:%S", &t);
-  display.print(buffer);
+  if (militaryTime) {
+    strftime(buffer, 32, "%k:%M:%S", &t);
+  } else {
+    strftime(buffer, 32, "%I:%M:%S %p", &t);
+  }
 
-  formatText(5, 140, 270);
+  printCentered(buffer, 170, 10);
   strftime(buffer, 32, "%A, %B %e", &t);
-  display.print(buffer);
+  printCentered(buffer, 270, 5);
   
   counter += 1;
 
   if ((counter % 60 == 0)) {
     weatherString = getWeather();
-    weatherString.replace("°", "");
+    weatherString.replace("°", ""); // It can't display ° :(
   }
-
-  formatText(5, 140, 320);
-  display.print(weatherString); // It can't display ° :(
+    
+  printCentered(weatherString, 330, 5);
 
   if (counter == 3600) {
     counter = 0;
@@ -118,70 +117,82 @@ void updateTime() {
     const unsigned long seventyYears = 2208988800UL;
     unsigned long epoch = seconds1900 - seventyYears;
 
-    set_time(epoch + (timeZone * 3600) + 3);
+    set_time(epoch + (timeZone * 3600));
   }
 }
 
 String getWeather() {
-  String returnString = "";
+  if (strlen(server) > 0) {
+    String returnString = "";
 
-  if (client.connect(server, port)) {
-
-    // Send HTTP GET request line
-    client.println("GET " + endpoint + " HTTP/1.1");
-    client.print("Host: ");
-    client.println(server);
-    
-
-    client.print("Authorization: Bearer ");
-    client.println(HOMEASSISTANT);
-    
-    client.println("Connection: close");
-    client.println(); // Blank line tells server we are done sending headers
-
-    while (client.connected()) {
-      String line = client.readStringUntil('\n');
-      if (line == "\r") { 
-        // An empty line means headers are done! Next comes the JSON.
-        break; 
-      }
-    }
-
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, client);
-    if (!error) {
-      String state = doc["state"];
-      String unit = "";
-      if (doc["attributes"]["state_class"] == "measurement") {
-        unit = doc["attributes"]["unit_of_measurement"].as<String>();
-      }
+    if (client.connect(server, port)) {
+      // Send HTTP GET request line
+      client.println("GET " + endpoint + " HTTP/1.1");
+      client.print("Host: ");
+      client.println(server);
       
-      returnString = state + " " + unit;
+
+      client.print("Authorization: Bearer ");
+      client.println(HOMEASSISTANT);
       
+      client.println("Connection: close");
+      client.println(); // Blank line tells server we are done sending headers
+
+      while (client.connected()) {
+        String line = client.readStringUntil('\n');
+        if (line == "\r") { 
+          // An empty line means headers are done! Next comes the JSON.
+          break; 
+        }
+      }
+
+      JsonDocument doc;
+      DeserializationError error = deserializeJson(doc, client);
+      if (!error) {
+        String state = doc["state"];
+        String unit = "";
+        if (doc["attributes"]["state_class"] == "measurement") {
+          unit = doc["attributes"]["unit_of_measurement"].as<String>();
+        }
+        
+        returnString = state + " " + unit;
+        
+      } else {
+        returnString = "N/A";
+      }
+
+      client.stop(); 
     } else {
-      returnString = "N/A";
+      return "N/A";
     }
-
-    client.stop(); 
-  } else {
-    return "N/A";
+    return returnString;
   }
-  return returnString;
+  return "";
 }
 
-void formatText(int size, int x, int y) {
-  display.setCursor(x, y);
-  display.setTextSize(size);
-  if (darkMode) {
-    display.setTextColor(WHITE);
-  } else {
-    display.setTextColor(BLACK);
-  }
-}
 void themeFillScreen() {
   if (darkMode) {
     display.fillScreen(BLACK);
   } else {
     display.fillScreen(WHITE);
   }
+}
+
+void printCentered(String text, int y, int size) {
+  if (darkMode) {
+    display.setTextColor(WHITE);
+  } else {
+    display.setTextColor(BLACK);
+  }
+
+  int16_t x1, y1;
+  uint16_t w, h;
+
+  display.setTextSize(size);
+  display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+
+  int x = (display.width() - w) / 2;
+
+  display.setCursor(x, y);
+  display.print(text);
 }
